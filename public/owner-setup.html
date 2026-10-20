@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f7f8fc">
+    <title>Private owner setup — Daymark</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/owner-setup.js" defer></script>
+  </head>
+  <body>
+    <main class="app-shell setup-shell">
+      <section class="auth-card" aria-labelledby="setup-title">
+        <a class="brand" href="/" aria-label="Daymark home"><span class="brand-mark" aria-hidden="true">d</span><span>daymark</span></a>
+        <p class="eyebrow">PRIVATE FIRST-TIME SETUP</p>
+        <h1 id="setup-title">Create the owner account</h1>
+        <p class="intro-copy">This setup is available only until the first owner account is created. Keep the setup token private.</p>
+        <form id="setup-form" class="stacked-form">
+          <label><span>Setup token</span><input id="setup-token" type="password" autocomplete="off" required></label>
+          <label><span>Owner name</span><input id="owner-name" maxlength="80" autocomplete="name" required></label>
+          <label><span>Owner username</span><input id="owner-username" maxlength="40" autocomplete="username" required></label>
+          <label><span>Password (at least 8 characters)</span><input id="owner-password" type="password" minlength="8" maxlength="128" autocomplete="new-password" required></label>
+          <button class="save-button" id="setup-submit" type="submit">Create owner account</button>
+          <p class="form-message" id="setup-message" role="alert"></p>
+        </form>
+        <a class="back-link" href="/">Back to sign in</a>
+      </section>
+    </main>
+  </body>
+</html>
