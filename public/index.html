@@ -27,7 +27,7 @@
         <p class="auth-help">Owner setup is available only through a private first-time setup page.</p>
       </section>
 
-      <section class="app-view hidden" id="app-view">
+      <section class="app-view hidden" id="app-view" data-has-shops="false">
         <header class="topbar">
           <a class="brand" href="#" aria-label="Daymark home"><span class="brand-mark" aria-hidden="true">d</span><span>daymark</span></a>
           <div class="topbar-actions">
@@ -43,6 +43,12 @@
             <h1 id="page-title">Attendance &amp; wages</h1>
             <p class="intro-copy" id="intro-copy"></p>
           </div>
+          <div class="shop-switcher" data-has-shops="false">
+            <label class="employee-control hidden" id="shop-picker" for="shop-select"><span>Shop</span><select id="shop-select"></select></label>
+            <button class="cancel-button owner-only hidden" id="rename-shop-button" type="button">Rename</button>
+            <button class="cancel-button owner-only" id="create-shop-button" type="button">Add shop</button>
+            <p class="shop-empty-note" id="shop-empty-note">Create a shop to start tracking attendance.</p>
+          </div>
         </section>
 
         <nav class="workspace-nav owner-only" aria-label="Owner workspace">
@@ -57,10 +63,11 @@
             <button class="icon-button" id="next-month" type="button" aria-label="Next month"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 5.5 5.5-5.5 5.5"/></svg></button>
             <button class="today-button" id="today-button" type="button">Today</button>
           </div>
-          <label class="employee-control owner-only context-worker" for="active-employee"><span>Worker</span><select id="active-employee"></select></label>
+          <label class="employee-control owner-only context-worker hidden" id="worker-picker" for="active-employee"><span>Worker</span><select id="active-employee"></select></label>
         </div>
 
         <section class="workspace-page" data-workspace-page="attendance" aria-label="Attendance workspace">
+        <p class="empty-workers-note hidden" id="empty-workers-note">No workers in this shop yet. Open <strong>Pay &amp; shop settings</strong> to add a worker.</p>
         <section class="summary" aria-label="Selected worker monthly summary">
           <article class="summary-card"><span class="summary-icon present-icon" aria-hidden="true">✓</span><div><p>Present</p><strong id="present-count">0</strong></div><span class="summary-period">this month</span></article>
           <article class="summary-card"><span class="summary-icon half-icon" aria-hidden="true">½</span><div><p>Half days</p><strong id="half-count">0</strong></div><span class="summary-period">this month</span></article>
@@ -107,7 +114,7 @@
           <form id="employee-form" class="employee-form">
             <label><span>Worker name</span><input id="employee-name" maxlength="80" placeholder="e.g. Anaya" required></label>
             <label><span>Login username</span><input id="worker-username" maxlength="40" autocomplete="off" placeholder="e.g. anaya" required></label>
-            <label><span id="worker-password-label">Temporary password</span><input id="worker-password" type="password" minlength="8" autocomplete="new-password" placeholder="At least 8 characters"></label>
+            <label><span id="worker-password-label">Worker account password</span><input id="worker-password" type="password" minlength="8" autocomplete="new-password" placeholder="Required to create or verify this login"></label>
             <label><span>Pay type</span><select id="pay-type"><option value="daily">Per day worked</option><option value="monthly">Fixed monthly wage</option></select></label>
             <label><span id="rate-label">Daily rate</span><span class="money-input"><span id="currency-prefix">₹</span><input id="pay-rate" type="number" min="0" step="0.01" inputmode="decimal" required></span></label>
             <label><span>Normal leave / month</span><input id="base-leave-allowance" type="number" min="0" max="31" step="1" value="2" required></label>
@@ -115,7 +122,7 @@
             <button class="save-button" id="employee-submit" type="submit">Add worker account</button>
             <button class="cancel-button hidden" id="employee-cancel" type="button">Add another worker</button>
           </form>
-          <p class="owner-help">Each worker gets a separate login. Their normal monthly allowance resets every month. Unused days do not carry over automatically; adjust only this month’s allowance if you want to carry days forward.</p>
+          <p class="owner-help">A new username and password create a worker login. To assign a worker to another shop, enter the same username and have them verify their password. Their login is shared, but pay rates and leave settings are separate per shop. Normal leave resets each month; unused days do not carry forward automatically.</p>
           <p class="form-message" id="employee-message" role="status"></p>
         </section>
         <div class="payroll-entry-grid management-entry-grid">
@@ -220,6 +227,14 @@
         <div class="dialog-heading"><div><p class="eyebrow">FINALIZED PAYROLL</p><h2 id="payroll-confirm-title">Confirm payroll change</h2></div><button class="dialog-close" type="button" id="close-payroll-confirm" aria-label="Close">×</button></div>
         <p id="payroll-confirm-message" class="payroll-confirm-message"></p>
         <div class="dialog-actions"><button class="cancel-button" type="button" id="cancel-payroll-confirm">Cancel</button><button class="save-button" type="submit" id="confirm-payroll-change">Continue with change</button></div>
+      </form>
+    </dialog>
+    <dialog id="create-shop-dialog" aria-labelledby="create-shop-title">
+      <form id="create-shop-form">
+        <div class="dialog-heading"><div><p class="eyebrow">SHOP SETTINGS</p><h2 id="create-shop-title">Create a shop</h2></div><button class="dialog-close" type="button" id="close-create-shop" aria-label="Close">×</button></div>
+        <label class="shop-name-control"><span>Shop name</span><input id="new-shop-name" maxlength="80" placeholder="e.g. Main Street Store" required></label>
+        <p class="dialog-error" id="create-shop-error" role="alert"></p>
+        <div class="dialog-actions"><button class="cancel-button" type="button" id="cancel-create-shop">Cancel</button><button class="save-button" id="save-create-shop" type="submit">Create shop</button></div>
       </form>
     </dialog>
     <div class="sr-only" id="live-message" role="status" aria-live="polite"></div>

@@ -32,6 +32,7 @@ setupForm.addEventListener('submit', async (event) => {
       body: JSON.stringify({
         setupToken: document.querySelector('#setup-token').value,
         name: document.querySelector('#owner-name').value.trim(),
+        shopName: document.querySelector('#shop-name').value.trim(),
         username: document.querySelector('#owner-username').value.trim(),
         password: document.querySelector('#owner-password').value,
       }),

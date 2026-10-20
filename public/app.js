@@ -17,6 +17,8 @@ const payTypeInput = document.querySelector('#pay-type');
 const themeToggles = document.querySelectorAll('[data-theme-toggle]');
 const loginView = document.querySelector('#login-view');
 const appView = document.querySelector('#app-view');
+const shopSelect = document.querySelector('#shop-select');
+const createShopDialog = document.querySelector('#create-shop-dialog');
 
 let currentUser = null;
 let csrf = '';
@@ -37,6 +39,8 @@ let payrollData = null;
 let closureData = [];
 let payrollConfirmResolve = null;
 let activeWorkspaceView = 'attendance';
+let shops = [];
+let activeShopId = '';
 
 function setWorkspaceView(view) {
   const owner = currentUser?.role === 'owner';
@@ -156,11 +160,38 @@ function showLogin(message = '', isError = true) {
   currentUser = null;
   csrf = '';
   activeWorkspaceView = 'attendance';
+  shops = [];
+  activeShopId = '';
   selectedDates.clear();
   selectionMode = false;
   appView.classList.add('hidden');
   loginView.classList.remove('hidden');
   showMessage(document.querySelector('#login-message'), message, isError);
+}
+
+function renderShops(selectedActiveShopId) {
+  if (selectedActiveShopId) activeShopId = selectedActiveShopId;
+  const hasShops = shops.length > 0;
+  appView.dataset.hasShops = String(hasShops);
+  document.querySelector('.shop-switcher').dataset.hasShops = String(hasShops);
+  shopSelect.replaceChildren();
+  for (const shop of shops) {
+    const option = document.createElement('option');
+    option.value = shop.id;
+    option.textContent = shop.name;
+    shopSelect.append(option);
+  }
+  shopSelect.value = activeShopId;
+  shopSelect.disabled = shops.length < 2;
+  document.querySelector('#shop-picker').classList.toggle('hidden', !hasShops);
+  document.querySelector('#rename-shop-button').disabled = !shops.length;
+  document.querySelector('#rename-shop-button').classList.toggle('hidden', !hasShops);
+  document.querySelector('#shop-empty-note').classList.toggle('hidden', hasShops || currentUser?.role !== 'owner');
+  document.querySelector('[data-workspace-page="attendance"]').classList.toggle('hidden', activeWorkspaceView !== 'attendance');
+  document.querySelector('[data-workspace-page="payroll"]').classList.toggle('hidden', !hasShops || activeWorkspaceView !== 'payroll');
+  document.querySelector('[data-workspace-page="management"]').classList.toggle('hidden', !hasShops || activeWorkspaceView !== 'management');
+  document.querySelector('.workspace-nav').classList.toggle('hidden', !hasShops || currentUser?.role !== 'owner');
+  if (!hasShops && currentUser?.role === 'owner') setWorkspaceView('attendance');
 }
 
 function renderEmployees() {
@@ -179,6 +210,11 @@ function renderEmployees() {
   adjustmentEmployee.value = selectedEmployeeId || employees[0]?.id || '';
   employeeSelect.disabled = employees.length < 2;
   adjustmentEmployee.disabled = employees.length === 0;
+  document.querySelector('#worker-picker').classList.toggle('hidden', employees.length === 0);
+  document.querySelector('#empty-workers-note').classList.toggle(
+    'hidden',
+    employees.length > 0 || shops.length === 0 || currentUser?.role !== 'owner',
+  );
 }
 
 function renderRole() {
@@ -192,7 +228,7 @@ function renderRole() {
   document.querySelector('#worker-password').required = !editingEmployeeId;
   document.querySelector('#worker-password-label').textContent = editingEmployeeId
     ? 'New password (optional)'
-    : 'Temporary password';
+    : 'Worker account password';
 }
 
 function updateBulkControls() {
@@ -245,7 +281,7 @@ function renderEmployeeForm() {
   document.querySelector('#worker-password').required = !editingEmployeeId;
   document.querySelector('#worker-password-label').textContent = editingEmployeeId
     ? 'New password (optional)'
-    : 'Temporary password';
+    : 'Worker account password';
   updatePayTypeLabel();
 }
 
@@ -576,7 +612,27 @@ async function refreshMonthData() {
 }
 
 async function refreshApp() {
+  const shopList = await api('/api/shops');
+  shops = shopList.shops;
+  renderShops(shopList.activeShopId);
   const month = monthKey(visibleDate);
+  if (!shopList.shops.length) {
+    employees = [];
+    selectedEmployeeId = '';
+    renderEmployees();
+    renderRole();
+    renderShops(shopList.activeShopId);
+    creatingEmployee = true;
+    renderEmployeeForm();
+    entries = {};
+    history = [];
+    payrollData = { employees: [], adjustments: [], closures: [], activity: [] };
+    closureData = [];
+    renderCalendar();
+    renderHistory();
+    renderPayroll();
+    return;
+  }
   const shop = await api(`/api/shop?month=${encodeURIComponent(month)}`);
   employees = shop.employees;
   currency = shop.currency;
@@ -584,7 +640,11 @@ async function refreshApp() {
   else if (!employees.some((employee) => employee.id === selectedEmployeeId)) selectedEmployeeId = employees[0]?.id ?? '';
   renderEmployees();
   renderRole();
-  if (currentUser.role === 'owner') renderEmployeeForm();
+  renderShops(shopList.activeShopId);
+  if (currentUser.role === 'owner') {
+    creatingEmployee = employees.length === 0;
+    renderEmployeeForm();
+  }
   await refreshMonthData();
 }
 
@@ -596,6 +656,7 @@ async function startApp() {
   }
   csrf = me.csrfToken;
   currentUser = me;
+  shops = me.shops;
   loginView.classList.add('hidden');
   appView.classList.remove('hidden');
   await refreshApp();
@@ -765,6 +826,69 @@ document.querySelector('#logout-button').addEventListener('click', async () => {
     showLogin('You have signed out.', false);
   } catch (error) {
     liveMessage.textContent = error.message;
+  }
+});
+
+shopSelect.addEventListener('change', async () => {
+  shopSelect.disabled = true;
+  try {
+    await api('/api/shops/active', {
+      method: 'POST',
+      body: JSON.stringify({ shopId: shopSelect.value }),
+    });
+    selectedEmployeeId = '';
+    selectedDates.clear();
+    selectionMode = false;
+    await refreshApp();
+  } catch (error) {
+    liveMessage.textContent = error.message;
+    try {
+      const current = await api('/api/shops');
+      shops = current.shops;
+      renderShops(current.activeShopId);
+    } catch (refreshError) {
+      liveMessage.textContent = refreshError.message;
+    }
+  } finally {
+    shopSelect.disabled = shops.length < 2;
+  }
+});
+
+document.querySelector('#create-shop-button').addEventListener('click', () => {
+  openShopDialog(false);
+});
+document.querySelector('#rename-shop-button').addEventListener('click', () => openShopDialog(true));
+function openShopDialog(rename) {
+  createShopDialog.dataset.mode = rename ? 'rename' : 'create';
+  document.querySelector('#create-shop-title').textContent = rename ? 'Rename this shop' : 'Create a shop';
+  document.querySelector('#save-create-shop').textContent = rename ? 'Save shop name' : 'Create shop';
+  document.querySelector('#create-shop-error').textContent = '';
+  document.querySelector('#new-shop-name').value = rename
+    ? shops.find((shop) => shop.id === activeShopId)?.name ?? ''
+    : '';
+  createShopDialog.showModal();
+}
+document.querySelector('#close-create-shop').addEventListener('click', () => createShopDialog.close());
+document.querySelector('#cancel-create-shop').addEventListener('click', () => createShopDialog.close());
+document.querySelector('#create-shop-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = document.querySelector('#save-create-shop');
+  const errorMessage = document.querySelector('#create-shop-error');
+  errorMessage.textContent = '';
+  button.disabled = true;
+  try {
+    const renaming = createShopDialog.dataset.mode === 'rename';
+    await api(renaming ? '/api/shops/active' : '/api/shops', {
+      method: renaming ? 'PATCH' : 'POST',
+      body: JSON.stringify({ name: document.querySelector('#new-shop-name').value.trim() }),
+    });
+    if (!renaming) selectedEmployeeId = '';
+    await refreshApp();
+    createShopDialog.close();
+  } catch (error) {
+    errorMessage.textContent = error.message;
+  } finally {
+    button.disabled = false;
   }
 });
 

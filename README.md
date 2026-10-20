@@ -23,6 +23,9 @@ Do not share `.env`, the setup token, database credentials, or worker passwords.
 ## Monthly leave and wages
 
 - Owners can switch between separate Attendance, Payroll, and Pay & shop settings views; workers only see Attendance.
+- An owner can create multiple named shops and switch the active shop. Attendance, worker assignments, closures, adjustments, payroll, and history remain scoped to the selected shop.
+- A worker login can be assigned to more than one shop: enter the existing username and verify the worker account password when adding them to another shop. Each shop keeps its own worker pay and leave settings; the worker can switch between shops they are assigned to.
+- On startup, existing single-shop data is assigned to the current owner and the existing shop is named “Main shop”; rename it from the shop selector if needed. Attendance and payroll records are not moved or merged.
 - Each worker has a normal monthly paid-leave allowance. The owner can set a separate allowance for the displayed month to carry days forward manually; unused leave is never carried automatically, and a one-month adjustment does not change future months.
 - Present counts as one worked day and Half day as half a worked day for daily-rate workers.
 - Unpaid leave reduces a fixed monthly wage by one day’s share: monthly wage ÷ (calendar days in that month − paid-leave allowance). The owner can override the deduction per day. Paid leave does not reduce fixed monthly wages.

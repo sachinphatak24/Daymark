@@ -24,6 +24,8 @@ if (!mongoUri || !sessionSecret || sessionSecret.length < 32) {
 }
 
 const shopSchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true, maxlength: 80 },
+  ownerUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   ownerName: { type: String, required: true, trim: true, maxlength: 80 },
   currency: { type: String, enum: CURRENCIES, default: 'INR' },
 }, { timestamps: true });
@@ -36,7 +38,6 @@ const userSchema = new mongoose.Schema({
   passwordHash: { type: String, required: true },
   employeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null },
 }, { timestamps: true });
-userSchema.index({ role: 1 }, { unique: true, partialFilterExpression: { role: 'owner' } });
 
 const employeeSchema = new mongoose.Schema({
   shopId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shop', required: true, index: true },
@@ -45,9 +46,10 @@ const employeeSchema = new mongoose.Schema({
   rate: { type: Number, min: 0, required: true },
   monthlyLeaveAllowance: { type: Number, min: 0, max: 31, required: true },
   leaveOverrides: { type: Map, of: Number, default: {} },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   active: { type: Boolean, default: true },
 }, { timestamps: true });
+employeeSchema.index({ shopId: 1, userId: 1 }, { unique: true });
 
 const attendanceSchema = new mongoose.Schema({
   shopId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shop', required: true, index: true },
@@ -204,7 +206,23 @@ function csrfToken(req) {
 
 function requireAuth(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'Please sign in.' });
-  next();
+  User.findById(req.session.userId).then(async (user) => {
+    if (!user) return res.status(401).json({ error: 'Please sign in again.' });
+    req.user = user;
+    req.session.role = user.role;
+    if (req.path.endsWith('/logout')) return next();
+    const membership = req.session.shopId && (user.role === 'owner'
+      ? await Shop.exists({ _id: req.session.shopId, ownerUserId: user._id })
+      : await Employee.exists({ shopId: req.session.shopId, userId: user._id, active: true }));
+    if (!membership) {
+      const shopSetupRoute = user.role === 'owner' && req.path === '/api/shops' &&
+        ['GET', 'POST'].includes(req.method) &&
+        !await Shop.exists({ ownerUserId: user._id });
+      if (shopSetupRoute) return next();
+      return res.status(403).json({ error: 'Choose a shop you have access to.' });
+    }
+    next();
+  }).catch(next);
 }
 
 function requireOwner(req, res, next) {
@@ -252,6 +270,14 @@ function workerJson(employee, month) {
 
 async function getShop(req) {
   return Shop.findById(req.session.shopId).lean();
+}
+
+async function accessibleShops(user) {
+  if (user.role === 'owner') {
+    return Shop.find({ ownerUserId: user._id }).sort({ name: 1 }).lean();
+  }
+  const assignments = await Employee.find({ userId: user._id, active: true }).sort({ createdAt: 1 }).populate('shopId').lean();
+  return assignments.map((assignment) => assignment.shopId).filter(Boolean);
 }
 
 async function isFinalizedMonth(shopId, month) {
@@ -373,18 +399,26 @@ app.get('/api/me', asyncRoute(async (req, res) => {
     req.session.destroy(() => {});
     return res.json({ authenticated: false });
   }
+  req.session.role = user.role;
+  let shops = await accessibleShops(user);
+  if (!shops.some((shop) => shop._id.toString() === req.session.shopId)) {
+    if (!shops.length && user.role !== 'owner') return res.status(403).json({ error: 'No active shop is assigned to this account.' });
+    req.session.shopId = shops[0]?._id.toString() ?? '';
+  }
   const token = await makeCsrfToken(req, res);
   const payload = {
     authenticated: true,
     csrfToken: token,
     role: user.role,
     name: user.displayName,
+    shops: shops.map((shop) => ({ id: shop._id.toString(), name: shop.name })),
+    activeShopId: req.session.shopId,
   };
-  if (user.role === 'owner') {
+  if (user.role === 'owner' && req.session.shopId) {
     const shop = await getShop(req);
     payload.currency = shop?.currency ?? 'INR';
-  } else {
-    const employee = await Employee.findOne({ _id: user.employeeId, shopId: user.shopId, active: true }).lean();
+  } else if (user.role === 'worker') {
+    const employee = await Employee.findOne({ userId: user._id, shopId: req.session.shopId, active: true }).lean();
     if (!employee) return res.status(403).json({ error: 'This worker account is not active.' });
     payload.employee = {
       id: employee._id.toString(),
@@ -401,13 +435,21 @@ app.post('/api/setup-owner', authLimiter, asyncRoute(async (req, res) => {
   if (!setupToken) return res.status(503).json({ error: 'Owner setup is not configured on the server.' });
   if (!ownerSetupTokenMatches(req.body.setupToken)) return res.status(403).json({ error: 'Invalid setup token.' });
   if (await User.exists({ role: 'owner' })) return res.status(409).json({ error: 'Owner setup has already been completed.' });
-  const { name, username, password } = req.body;
+  const { name, username, password, shopName = 'Main shop' } = req.body;
   if (!validName(name) || !validUsername(username) || !validPassword(password)) {
     return res.status(400).json({ error: 'Enter a name, a username (3–40 letters/numbers/._-), and a password of at least 8 characters.' });
   }
-  const shop = await Shop.create({ ownerName: name.trim() });
+  if (!validName(shopName)) return res.status(400).json({ error: 'Enter a valid shop name.' });
+  const ownerId = new mongoose.Types.ObjectId();
+  const shop = await Shop.create({
+    _id: new mongoose.Types.ObjectId(),
+    name: shopName.trim(),
+    ownerUserId: ownerId,
+    ownerName: name.trim(),
+  });
   try {
     const user = await User.create({
+      _id: ownerId,
       shopId: shop._id,
       role: 'owner',
       displayName: name.trim(),
@@ -441,10 +483,15 @@ app.post('/api/login', authLimiter, asyncRoute(async (req, res) => {
   if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
     return res.status(401).json({ error: 'Username or password is incorrect.' });
   }
+  const shops = await accessibleShops(user);
+  if (!shops.length && user.role !== 'owner') return res.status(403).json({ error: 'No shop is assigned to this account.' });
+  const defaultShopId = user.role === 'owner'
+    ? (shops.find((shop) => shop._id.toString() === user.shopId?.toString())?._id ?? shops[0]?._id ?? '')
+    : shops[0]._id;
   req.session.regenerate((error) => {
     if (error) return res.status(500).json({ error: 'Could not start your session.' });
     req.session.userId = user._id.toString();
-    req.session.shopId = user.shopId.toString();
+    req.session.shopId = defaultShopId ? defaultShopId.toString() : '';
     req.session.role = user.role;
     csrfToken(req);
     req.session.save((saveError) => {
@@ -452,6 +499,51 @@ app.post('/api/login', authLimiter, asyncRoute(async (req, res) => {
       res.json({ ok: true });
     });
   });
+}));
+
+app.get('/api/shops', requireAuth, asyncRoute(async (req, res) => {
+  const shops = await accessibleShops(req.user);
+  res.json({
+    activeShopId: req.session.shopId,
+    shops: shops.map((shop) => ({ id: shop._id.toString(), name: shop.name })),
+  });
+}));
+
+app.post('/api/shops', requireAuth, requireCsrf, requireOwner, asyncRoute(async (req, res) => {
+  const { name } = req.body;
+  if (!validName(name)) return res.status(400).json({ error: 'Enter a shop name up to 80 characters.' });
+  const shop = await Shop.create({
+    name: name.trim(),
+    ownerUserId: req.user._id,
+    ownerName: req.user.displayName,
+  });
+  req.session.shopId = shop._id.toString();
+  await new Promise((resolve, reject) => req.session.save((error) => error ? reject(error) : resolve()));
+  res.status(201).json({ id: shop._id.toString(), name: shop.name });
+}));
+
+app.patch('/api/shops/active', requireAuth, requireCsrf, requireOwner, asyncRoute(async (req, res) => {
+  const { name } = req.body;
+  if (!validName(name)) return res.status(400).json({ error: 'Enter a shop name up to 80 characters.' });
+  const shop = await Shop.findOneAndUpdate(
+    { _id: req.session.shopId, ownerUserId: req.user._id },
+    { $set: { name: name.trim() } },
+    { new: true, runValidators: true },
+  );
+  if (!shop) return res.status(404).json({ error: 'Shop not found.' });
+  res.json({ id: shop._id.toString(), name: shop.name });
+}));
+
+app.post('/api/shops/active', requireAuth, requireCsrf, asyncRoute(async (req, res) => {
+  const { shopId } = req.body;
+  if (!mongoose.isValidObjectId(shopId)) return res.status(400).json({ error: 'Choose a valid shop.' });
+  const membership = req.user.role === 'owner'
+    ? await Shop.exists({ _id: shopId, ownerUserId: req.user._id })
+    : await Employee.exists({ shopId, userId: req.user._id, active: true });
+  if (!membership) return res.status(403).json({ error: 'You do not have access to that shop.' });
+  req.session.shopId = shopId;
+  await new Promise((resolve, reject) => req.session.save((error) => error ? reject(error) : resolve()));
+  res.json({ ok: true, activeShopId: shopId });
 }));
 
 app.post('/api/logout', requireAuth, requireCsrf, (req, res) => {
@@ -469,43 +561,64 @@ app.get('/api/shop', requireAuth, asyncRoute(async (req, res) => {
     const employee = await Employee.findOne({ userId: req.session.userId, shopId: req.session.shopId, active: true }).populate('userId', 'username');
     if (!employee) return res.status(404).json({ error: 'Worker profile not found.' });
     const month = validMonth(req.query.month) ? req.query.month : new Date().toISOString().slice(0, 7);
-    return res.json({ currency: shop.currency, employees: [workerJson(employee, month)] });
+    return res.json({ name: shop.name, currency: shop.currency, employees: [workerJson(employee, month)] });
   }
   const month = validMonth(req.query.month) ? req.query.month : new Date().toISOString().slice(0, 7);
   const employees = await Employee.find({ shopId: req.session.shopId, active: true }).populate('userId', 'username').sort({ name: 1 });
-  res.json({ currency: shop.currency, employees: employees.map((employee) => workerJson(employee, month)) });
+  res.json({ name: shop.name, currency: shop.currency, employees: employees.map((employee) => workerJson(employee, month)) });
 }));
 
 app.post('/api/workers', requireAuth, requireCsrf, requireOwner, asyncRoute(async (req, res) => {
   const { name, username, password, payType, rate, monthlyLeaveAllowance, month, allowanceThisMonth } = req.body;
-  if (!validName(name) || !validUsername(username) || !validPassword(password) ||
+  if (!validName(name) || !validUsername(username) ||
       !['daily', 'monthly'].includes(payType) || !Number.isFinite(rate) || rate < 0 ||
       !Number.isInteger(monthlyLeaveAllowance) || monthlyLeaveAllowance < 0 || monthlyLeaveAllowance > 31 ||
       !validMonth(month) || !Number.isInteger(allowanceThisMonth) || allowanceThisMonth < 0 || allowanceThisMonth > 31) {
-    return res.status(400).json({ error: 'Check the worker details, login credentials, pay rate, and monthly leave allowance.' });
+    return res.status(400).json({ error: 'Check the worker details, pay rate, and monthly leave allowance.' });
+  }
+  const normalizedUsername = username.trim().toLowerCase();
+  const existingUser = await User.findOne({ username: normalizedUsername });
+  if (existingUser?.role === 'owner') return res.status(409).json({ error: 'That username belongs to an owner account.' });
+  if (!validPassword(password)) {
+    return res.status(400).json({ error: 'Enter a password of at least 8 characters to create a login or verify an existing worker.' });
+  }
+  if (existingUser && !(await bcrypt.compare(password, existingUser.passwordHash))) {
+    return res.status(401).json({ error: 'That password does not match the existing worker account.' });
   }
   if (!await requirePayrollConfirmation(req, res, month)) return;
   const actor = await User.findById(req.session.userId).select('displayName').lean();
   if (!actor) return res.status(401).json({ error: 'Please sign in again.' });
-  const employee = new Employee({
+  let employee = existingUser
+    ? await Employee.findOne({ shopId: req.session.shopId, userId: existingUser._id })
+    : null;
+  if (employee?.active) return res.status(409).json({ error: 'This worker is already assigned to the selected shop.' });
+  employee ??= new Employee({
     shopId: req.session.shopId,
+    userId: existingUser?._id ?? new mongoose.Types.ObjectId(),
+  });
+  employee.set({
     name: name.trim(),
     payType,
     rate,
     monthlyLeaveAllowance,
     leaveOverrides: { [month]: allowanceThisMonth },
-    userId: new mongoose.Types.ObjectId(),
+    active: true,
   });
+  let createdUser = false;
   try {
-    const user = await User.create({
-      _id: employee.userId,
-      shopId: req.session.shopId,
-      role: 'worker',
-      displayName: employee.name,
-      username: username.trim().toLowerCase(),
-      passwordHash: await bcrypt.hash(password, 12),
-      employeeId: employee._id,
-    });
+    let user = existingUser;
+    if (!user) {
+      user = await User.create({
+        _id: employee.userId,
+        shopId: req.session.shopId,
+        role: 'worker',
+        displayName: employee.name,
+        username: normalizedUsername,
+        passwordHash: await bcrypt.hash(password, 12),
+        employeeId: employee._id,
+      });
+      createdUser = true;
+    }
     await employee.save();
     await markFinalizedMonthChanged(req.session.shopId, month, actor.displayName);
     await logActivity({
@@ -517,9 +630,8 @@ app.post('/api/workers', requireAuth, requireCsrf, requireOwner, asyncRoute(asyn
     });
     res.status(201).json(workerJson({ ...employee.toObject(), user: { username: user.username } }, month));
   } catch (error) {
-    await User.deleteOne({ _id: employee.userId });
-    await Employee.deleteOne({ _id: employee._id });
-    if (error.code === 11000) return res.status(409).json({ error: 'That username is already in use.' });
+    if (createdUser) await User.deleteOne({ _id: employee.userId });
+    if (error.code === 11000) return res.status(409).json({ error: 'That username is already in use or assigned to this shop.' });
     throw error;
   }
 }));
@@ -536,14 +648,13 @@ app.patch('/api/workers/:id', requireAuth, requireCsrf, requireOwner, asyncRoute
   if (!await requirePayrollConfirmation(req, res, month)) return;
   const employee = await Employee.findOne({ _id: req.params.id, shopId: req.session.shopId, active: true });
   if (!employee) return res.status(404).json({ error: 'Worker not found.' });
-  const user = await User.findOne({ _id: employee.userId, shopId: req.session.shopId });
+  const user = await User.findOne({ _id: employee.userId, role: 'worker' });
   if (!user) return res.status(404).json({ error: 'Worker account not found.' });
   employee.name = name.trim();
   employee.payType = payType;
   employee.rate = rate;
   employee.monthlyLeaveAllowance = monthlyLeaveAllowance;
   employee.leaveOverrides.set(month, allowanceThisMonth);
-  user.displayName = employee.name;
   user.username = username.trim().toLowerCase();
   if (password) user.passwordHash = await bcrypt.hash(password, 12);
   try {
@@ -1016,7 +1127,39 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong. Please try again.' });
 });
 
+async function prepareMultiShopData() {
+  const owner = await User.findOne({ role: 'owner' }).select('_id').lean();
+  if (owner) {
+    await Shop.updateMany(
+      { ownerUserId: { $exists: false } },
+      { $set: { ownerUserId: owner._id } },
+    );
+  }
+  await Shop.updateMany(
+    { name: { $exists: false } },
+    { $set: { name: 'Main shop' } },
+  );
+
+  for (const [collection, obsoleteIndex] of [
+    [User.collection, (index) => index.unique && index.key?.role === 1],
+    [Employee.collection, (index) => index.unique && Object.keys(index.key ?? {}).join(',') === 'userId'],
+  ]) {
+    let indexes = [];
+    try {
+      indexes = await collection.indexes();
+    } catch (error) {
+      if (error.codeName !== 'NamespaceNotFound') throw error;
+    }
+    for (const index of indexes.filter(obsoleteIndex)) {
+      await collection.dropIndex(index.name);
+    }
+  }
+  await Employee.collection.createIndex({ shopId: 1, userId: 1 }, { unique: true });
+  await Shop.collection.createIndex({ ownerUserId: 1 });
+}
+
 mongoose.connect(mongoUri)
+  .then(prepareMultiShopData)
   .then(() => app.listen(port, () => console.log(`Daymark is ready at http://localhost:${port}`)))
   .catch((error) => {
     console.error('Could not connect to MongoDB:', error.message);

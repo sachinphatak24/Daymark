@@ -56,6 +56,18 @@ button { color: inherit; }
 .theme-toggle { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 10px; color: var(--text); background: var(--surface); border: 1px solid var(--input-line); border-radius: 8px; font-size: 11px; cursor: pointer; }
 .theme-toggle:hover, .icon-button:hover, .today-button:hover { background: var(--surface-hover); border-color: var(--purple); }
 .intro { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 32px 0 21px; }
+.shop-switcher { min-width: 220px; display: flex; align-items: flex-end; gap: 8px; }
+.shop-switcher .employee-control { flex: 1 1 auto; }
+.shop-switcher .cancel-button { flex: 0 0 auto; min-height: 34px; }
+.shop-switcher[data-has-shops="false"] #rename-shop-button { display: none !important; }
+.app-view[data-has-shops="false"] .workspace-nav,
+.app-view[data-has-shops="false"] [data-workspace-page="payroll"],
+.app-view[data-has-shops="false"] [data-workspace-page="management"] { display: none !important; }
+.shop-empty-note { max-width: 245px; margin: 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.shop-name-control { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.shop-name-control input { width: 100%; min-width: 0; height: 38px; padding: 0 10px; color: var(--text); background: var(--surface); border: 1px solid var(--input-line); border-radius: 8px; }
+.empty-workers-note { margin: 0 0 14px; padding: 12px 14px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 9px; font-size: 11px; line-height: 1.5; }
+.empty-workers-note strong { color: var(--text-strong); }
 .eyebrow { margin: 0 0 7px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 1.25px; }
 h1, h2, p { margin-top: 0; }
 h1 { margin-bottom: 7px; color: var(--text-strong); font: 800 28px 'Manrope', sans-serif; letter-spacing: -1px; }
@@ -197,6 +209,11 @@ body[data-role="worker"] .owner-only { display: none !important; }
 .record-action { flex: 0 0 auto; min-height: 27px; padding: 0 8px; font-size: 9px; }
 .record-inactive { opacity: .65; }
 #payroll-confirm-form { padding: 22px; }
+#create-shop-form { display: grid; gap: 8px; padding: 22px; }
+#create-shop-form .dialog-heading { margin-bottom: 4px; }
+#create-shop-form .dialog-actions { gap: 8px; margin-top: 4px; }
+#create-shop-form .dialog-actions button { min-width: 84px; }
+#create-shop-form .dialog-error { min-height: 0; margin: 0; }
 .payroll-confirm-message { color: var(--muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 .auth-card { width: min(430px, 100%); margin: max(8vh, 36px) auto; padding: 30px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 30px var(--shadow); }
 .auth-brand-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 35px; }
@@ -266,6 +283,8 @@ dialog::backdrop { background: #10132188; backdrop-filter: blur(2px); }
   .save-indicator > span:first-child { margin-right: 0; }
   .theme-toggle { padding: 0 8px; }
   .intro { align-items: flex-start; flex-direction: column; gap: 16px; padding: 25px 0 18px; }
+  .shop-switcher { width: 100%; min-width: 0; }
+  .shop-empty-note { flex: 1 1 100%; }
   .workspace-nav { margin-bottom: 10px; }
   .workspace-toolbar { justify-content: flex-start; gap: 8px; margin-bottom: 10px; }
   .workspace-toolbar .employee-control { flex: 1 1 150px; max-width: none; }
