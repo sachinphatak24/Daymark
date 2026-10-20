@@ -74,11 +74,62 @@ const auditSchema = new mongoose.Schema({
 }, { timestamps: true });
 auditSchema.index({ shopId:  1, createdAt: -1 });
 
+const payrollPeriodSchema = new mongoose.Schema({
+  shopId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shop', required: true, index: true },
+  month: { type: String, required: true, match: /^\d{4}-(0[1-9]|1[0-2])$/ },
+  finalizedAt: { type: Date, default: null },
+  finalizedBy: { type: String, default: '' },
+  lastChangeAt: { type: Date, default: null },
+  lastChangeBy: { type: String, default: '' },
+  snapshot: { type: [mongoose.Schema.Types.Mixed], default: [] },
+}, { timestamps: true });
+payrollPeriodSchema.index({ shopId: 1, month: 1 }, { unique: true });
+
+const adjustmentSchema = new mongoose.Schema({
+  shopId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shop', required: true, index: true },
+  employeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true, index: true },
+  month: { type: String, required: true, match: /^\d{4}-(0[1-9]|1[0-2])$/ },
+  type: { type: String, enum: ['advance', 'bonus', 'deduction'], required: true },
+  amount: { type: Number, min: 0.01, required: true },
+  note: { type: String, trim: true, maxlength: 200, default: '' },
+  actor: { type: String, required: true, maxlength: 80 },
+  voidedAt: { type: Date, default: null },
+  voidedBy: { type: String, default: '' },
+}, { timestamps: true });
+adjustmentSchema.index({ shopId: 1, month: 1, createdAt: -1 });
+
+const closureSchema = new mongoose.Schema({
+  shopId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shop', required: true, index: true },
+  date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
+  seriesId: { type: String, default: '' },
+  label: { type: String, required: true, trim: true, maxlength: 80 },
+  type: { type: String, enum: ['holiday', 'weekly_off'], required: true },
+  payTreatment: { type: String, enum: ['paid', 'unpaid'], required: true },
+  actor: { type: String, required: true, maxlength: 80 },
+  active: { type: Boolean, default: true },
+  voidedAt: { type: Date, default: null },
+  voidedBy: { type: String, default: '' },
+}, { timestamps: true });
+closureSchema.index({ shopId: 1, date: 1 }, { unique: true, partialFilterExpression: { active: true } });
+
+const activitySchema = new mongoose.Schema({
+  shopId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shop', required: true, index: true },
+  month: { type: String, required: true, match: /^\d{4}-(0[1-9]|1[0-2])$/ },
+  action: { type: String, required: true, maxlength: 40 },
+  description: { type: String, required: true, maxlength: 500 },
+  actor: { type: String, required: true, maxlength: 80 },
+}, { timestamps: true });
+activitySchema.index({ shopId: 1, month: 1, createdAt: -1 });
+
 const Shop = mongoose.model('Shop', shopSchema);
 const User = mongoose.model('User', userSchema);
 const Employee = mongoose.model('Employee', employeeSchema);
 const Attendance = mongoose.model('Attendance', attendanceSchema);
 const Audit = mongoose.model('Audit', auditSchema);
+const PayrollPeriod = mongoose.model('PayrollPeriod', payrollPeriodSchema);
+const PayrollAdjustment = mongoose.model('PayrollAdjustment', adjustmentSchema);
+const ShopClosure = mongoose.model('ShopClosure', closureSchema);
+const Activity = mongoose.model('Activity', activitySchema);
 
 app.disable('x-powered-by');
 if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
@@ -201,6 +252,107 @@ function workerJson(employee, month) {
 
 async function getShop(req) {
   return Shop.findById(req.session.shopId).lean();
+}
+
+async function isFinalizedMonth(shopId, month) {
+  return Boolean(await PayrollPeriod.exists({ shopId, month, finalizedAt: { $ne: null } }));
+}
+
+async function requirePayrollConfirmation(req, res, month) {
+  if (!await isFinalizedMonth(req.session.shopId, month) || req.body.confirmFinalizedMonth === true) return true;
+  res.status(409).json({
+    code: 'MONTH_FINALIZED',
+    error: `Payroll for ${month} is finalized. Confirm to apply this change; the payroll report will reflect the update.`,
+  });
+  return false;
+}
+
+async function markFinalizedMonthChanged(shopId, month, actor) {
+  await PayrollPeriod.updateOne(
+    { shopId, month, finalizedAt: { $ne: null } },
+    { $set: { lastChangeAt: new Date(), lastChangeBy: actor } },
+  );
+}
+
+async function logActivity({ shopId, month, action, description, actor }) {
+  await Activity.create({ shopId, month, action, description, actor });
+}
+
+function payrollEmployeeSummary(employee, records, adjustments, closures, month) {
+  const datesInMonth = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+  const allowance = employee.leaveOverrides.get(month) ?? employee.monthlyLeaveAllowance;
+  const dailyShare = Number((employee.rate / Math.max(1, datesInMonth - allowance)).toFixed(2));
+  const presentDays = records.filter((record) => record.status === 'present').length;
+  const halfDays = records.filter((record) => record.status === 'half').length;
+  const paidLeaveDays = records.filter((record) => record.status === 'paid').length;
+  const unpaidLeaveDays = records.filter((record) => record.status === 'unpaid').length;
+  const unpaidLeaveDeduction = employee.payType === 'monthly'
+    ? records.reduce((sum, record) => sum + (record.status === 'unpaid' ? record.deductionAmount ?? dailyShare : 0), 0)
+    : 0;
+  const paidClosureDays = closures.filter((closure) => closure.payTreatment === 'paid').length;
+  const unpaidClosureDays = closures.length - paidClosureDays;
+  const closureDeduction = employee.payType === 'monthly'
+    ? Number((dailyShare * unpaidClosureDays).toFixed(2))
+    : 0;
+  const grossWage = employee.payType === 'monthly'
+    ? employee.rate
+    : Number(((presentDays + halfDays * 0.5 + paidClosureDays) * employee.rate).toFixed(2));
+  const activeAdjustments = adjustments.filter((adjustment) => !adjustment.voidedAt);
+  const advances = activeAdjustments.filter((adjustment) => adjustment.type === 'advance').reduce((sum, item) => sum + item.amount, 0);
+  const bonuses = activeAdjustments.filter((adjustment) => adjustment.type === 'bonus').reduce((sum, item) => sum + item.amount, 0);
+  const otherDeductions = activeAdjustments.filter((adjustment) => adjustment.type === 'deduction').reduce((sum, item) => sum + item.amount, 0);
+  const totalDeductions = Number((unpaidLeaveDeduction + closureDeduction + advances + otherDeductions).toFixed(2));
+  const finalPay = Number(Math.max(0, grossWage + bonuses - totalDeductions).toFixed(2));
+  return {
+    employeeId: employee._id.toString(),
+    employeeName: employee.name,
+    payType: employee.payType,
+    rate: employee.rate,
+    presentDays,
+    halfDays,
+    paidLeaveDays,
+    unpaidLeaveDays,
+    paidClosureDays,
+    unpaidClosureDays,
+    grossWage: Number(grossWage.toFixed(2)),
+    unpaidLeaveDeduction: Number(unpaidLeaveDeduction.toFixed(2)),
+    closureDeduction,
+    advances: Number(advances.toFixed(2)),
+    bonuses: Number(bonuses.toFixed(2)),
+    otherDeductions: Number(otherDeductions.toFixed(2)),
+    totalDeductions,
+    finalPay,
+  };
+}
+
+async function calculatePayrollRows(shopId, month) {
+  const monthStart = `${month}-01`;
+  const monthEnd = `${month}-31`;
+  const [employees, attendance, adjustments, closures] = await Promise.all([
+    Employee.find({ shopId, active: true }).sort({ name: 1 }),
+    Attendance.find({ shopId, date: { $gte: monthStart, $lte: monthEnd } }).lean(),
+    PayrollAdjustment.find({ shopId, month }).lean(),
+    ShopClosure.find({ shopId, date: { $gte: monthStart, $lte: monthEnd }, active: true }).sort({ date: 1 }).lean(),
+  ]);
+  const attendanceByEmployee = new Map();
+  for (const record of attendance) {
+    const employeeId = record.employeeId.toString();
+    if (!attendanceByEmployee.has(employeeId)) attendanceByEmployee.set(employeeId, []);
+    attendanceByEmployee.get(employeeId).push(record);
+  }
+  const adjustmentsByEmployee = new Map();
+  for (const adjustment of adjustments) {
+    const employeeId = adjustment.employeeId.toString();
+    if (!adjustmentsByEmployee.has(employeeId)) adjustmentsByEmployee.set(employeeId, []);
+    adjustmentsByEmployee.get(employeeId).push(adjustment);
+  }
+  return employees.map((employee) => payrollEmployeeSummary(
+    employee,
+    attendanceByEmployee.get(employee._id.toString()) ?? [],
+    adjustmentsByEmployee.get(employee._id.toString()) ?? [],
+    closures,
+    month,
+  ));
 }
 
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
@@ -332,6 +484,9 @@ app.post('/api/workers', requireAuth, requireCsrf, requireOwner, asyncRoute(asyn
       !validMonth(month) || !Number.isInteger(allowanceThisMonth) || allowanceThisMonth < 0 || allowanceThisMonth > 31) {
     return res.status(400).json({ error: 'Check the worker details, login credentials, pay rate, and monthly leave allowance.' });
   }
+  if (!await requirePayrollConfirmation(req, res, month)) return;
+  const actor = await User.findById(req.session.userId).select('displayName').lean();
+  if (!actor) return res.status(401).json({ error: 'Please sign in again.' });
   const employee = new Employee({
     shopId: req.session.shopId,
     name: name.trim(),
@@ -352,6 +507,14 @@ app.post('/api/workers', requireAuth, requireCsrf, requireOwner, asyncRoute(asyn
       employeeId: employee._id,
     });
     await employee.save();
+    await markFinalizedMonthChanged(req.session.shopId, month, actor.displayName);
+    await logActivity({
+      shopId: req.session.shopId,
+      month,
+      action: 'worker_added',
+      description: `Worker ${employee.name} was added.`,
+      actor: actor.displayName,
+    });
     res.status(201).json(workerJson({ ...employee.toObject(), user: { username: user.username } }, month));
   } catch (error) {
     await User.deleteOne({ _id: employee.userId });
@@ -370,6 +533,7 @@ app.patch('/api/workers/:id', requireAuth, requireCsrf, requireOwner, asyncRoute
       !validMonth(month) || !Number.isInteger(allowanceThisMonth) || allowanceThisMonth < 0 || allowanceThisMonth > 31) {
     return res.status(400).json({ error: 'Check the worker details, login credentials, pay rate, and monthly leave allowance.' });
   }
+  if (!await requirePayrollConfirmation(req, res, month)) return;
   const employee = await Employee.findOne({ _id: req.params.id, shopId: req.session.shopId, active: true });
   if (!employee) return res.status(404).json({ error: 'Worker not found.' });
   const user = await User.findOne({ _id: employee.userId, shopId: req.session.shopId });
@@ -388,6 +552,14 @@ app.patch('/api/workers/:id', requireAuth, requireCsrf, requireOwner, asyncRoute
     if (error.code === 11000) return res.status(409).json({ error: 'That username is already in use.' });
     throw error;
   }
+  await markFinalizedMonthChanged(req.session.shopId, month, user.displayName);
+  await logActivity({
+    shopId: req.session.shopId,
+    month,
+    action: 'worker_pay_updated',
+    description: `Pay or leave settings updated for ${employee.name}.`,
+    actor: user.displayName,
+  });
   res.json(workerJson({ ...employee.toObject(), user: { username: user.username } }, month));
 }));
 
@@ -396,6 +568,223 @@ app.patch('/api/settings', requireAuth, requireCsrf, requireOwner, asyncRoute(as
   const shop = await Shop.findByIdAndUpdate(req.session.shopId, { currency: req.body.currency }, { new: true });
   if (!shop) return res.status(404).json({ error: 'Shop not found.' });
   res.json({ currency: shop.currency });
+}));
+
+app.get('/api/payroll', requireAuth, requireOwner, asyncRoute(async (req, res) => {
+  const { month } = req.query;
+  if (!validMonth(month)) return res.status(400).json({ error: 'Choose a valid month.' });
+  const [calculatedEmployees, adjustments, closures, period, activity] = await Promise.all([
+    calculatePayrollRows(req.session.shopId, month),
+    PayrollAdjustment.find({ shopId: req.session.shopId, month }).sort({ createdAt: -1 }).lean(),
+    ShopClosure.find({ shopId: req.session.shopId, date: { $gte: `${month}-01`, $lte: `${month}-31` }, active: true }).sort({ date: 1 }).lean(),
+    PayrollPeriod.findOne({ shopId: req.session.shopId, month }).lean(),
+    Activity.find({ shopId: req.session.shopId, month }).sort({ createdAt: -1 }).limit(100).lean(),
+  ]);
+  res.json({
+    month,
+    finalizedAt: period?.finalizedAt?.toISOString() ?? null,
+    finalizedBy: period?.finalizedBy ?? '',
+    lastChangeAt: period?.lastChangeAt?.toISOString() ?? null,
+    lastChangeBy: period?.lastChangeBy ?? '',
+    employees: period?.finalizedAt && !period.lastChangeAt && period.snapshot?.length
+      ? period.snapshot
+      : calculatedEmployees,
+    adjustments: adjustments.map((item) => ({
+      id: item._id.toString(),
+      employeeId: item.employeeId.toString(),
+      month: item.month,
+      type: item.type,
+      amount: item.amount,
+      note: item.note,
+      actor: item.actor,
+      createdAt: item.createdAt.toISOString(),
+      voidedAt: item.voidedAt?.toISOString() ?? null,
+      voidedBy: item.voidedBy ?? '',
+    })),
+    closures: closures.map((item) => ({
+      id: item._id.toString(),
+      date: item.date,
+      seriesId: item.seriesId,
+      label: item.label,
+      type: item.type,
+      payTreatment: item.payTreatment,
+      actor: item.actor,
+      createdAt: item.createdAt.toISOString(),
+    })),
+    activity: activity.map((item) => ({
+      action: item.action,
+      description: item.description,
+      actor: item.actor,
+      timestamp: item.createdAt.toISOString(),
+    })),
+  });
+}));
+
+app.post('/api/payroll/finalize', requireAuth, requireCsrf, requireOwner, asyncRoute(async (req, res) => {
+  const { month } = req.body;
+  if (!validMonth(month)) return res.status(400).json({ error: 'Choose a valid month.' });
+  const actor = await User.findById(req.session.userId).select('displayName').lean();
+  if (!actor) return res.status(401).json({ error: 'Please sign in again.' });
+  const wasFinalized = await isFinalizedMonth(req.session.shopId, month);
+  const snapshot = await calculatePayrollRows(req.session.shopId, month);
+  const period = await PayrollPeriod.findOneAndUpdate(
+    { shopId: req.session.shopId, month },
+    { $set: { finalizedAt: new Date(), finalizedBy: actor.displayName, lastChangeAt: null, lastChangeBy: '', snapshot } },
+    { upsert: true, new: true, runValidators: true },
+  );
+  await logActivity({
+    shopId: req.session.shopId,
+    month,
+    action: 'payroll_finalized',
+    description: wasFinalized ? 'Payroll was reviewed and finalized again.' : 'Payroll was reviewed and finalized.',
+    actor: actor.displayName,
+  });
+  res.json({ finalizedAt: period.finalizedAt.toISOString(), finalizedBy: period.finalizedBy });
+}));
+
+app.post('/api/payroll/adjustments', requireAuth, requireCsrf, requireOwner, asyncRoute(async (req, res) => {
+  const { month, employeeId, type, amount, note = '' } = req.body;
+  if (!validMonth(month) || !mongoose.isValidObjectId(employeeId) ||
+      !['advance', 'bonus', 'deduction'].includes(type) ||
+      !Number.isFinite(amount) || amount <= 0 || amount > 100000000 ||
+      typeof note !== 'string' || note.trim().length > 200) {
+    return res.status(400).json({ error: 'Enter a worker, adjustment type, positive amount, valid month, and a note under 200 characters.' });
+  }
+  if (!await requirePayrollConfirmation(req, res, month)) return;
+  const [employee, actor] = await Promise.all([
+    Employee.findOne({ _id: employeeId, shopId: req.session.shopId, active: true }).select('name'),
+    User.findById(req.session.userId).select('displayName'),
+  ]);
+  if (!employee) return res.status(404).json({ error: 'Worker not found.' });
+  if (!actor) return res.status(401).json({ error: 'Please sign in again.' });
+  const adjustment = await PayrollAdjustment.create({
+    shopId: req.session.shopId,
+    employeeId,
+    month,
+    type,
+    amount,
+    note: note.trim(),
+    actor: actor.displayName,
+  });
+  await markFinalizedMonthChanged(req.session.shopId, month, actor.displayName);
+  await logActivity({
+    shopId: req.session.shopId,
+    month,
+    action: 'adjustment_added',
+    description: `${type} for ${employee.name}: ${amount.toFixed(2)}${note.trim() ? ` (${note.trim()})` : ''}.`,
+    actor: actor.displayName,
+  });
+  res.status(201).json({ id: adjustment._id.toString() });
+}));
+
+app.delete('/api/payroll/adjustments/:id', requireAuth, requireCsrf, requireOwner, asyncRoute(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Choose a valid adjustment.' });
+  const adjustment = await PayrollAdjustment.findOne({ _id: req.params.id, shopId: req.session.shopId, voidedAt: null });
+  if (!adjustment) return res.status(404).json({ error: 'Adjustment not found.' });
+  if (!await requirePayrollConfirmation(req, res, adjustment.month)) return;
+  const actor = await User.findById(req.session.userId).select('displayName').lean();
+  if (!actor) return res.status(401).json({ error: 'Please sign in again.' });
+  adjustment.voidedAt = new Date();
+  adjustment.voidedBy = actor.displayName;
+  await adjustment.save();
+  await markFinalizedMonthChanged(req.session.shopId, adjustment.month, actor.displayName);
+  await logActivity({
+    shopId: req.session.shopId,
+    month: adjustment.month,
+    action: 'adjustment_voided',
+    description: `${adjustment.type} for ${adjustment.amount.toFixed(2)} was voided.`,
+    actor: actor.displayName,
+  });
+  res.json({ ok: true });
+}));
+
+app.get('/api/closures', requireAuth, asyncRoute(async (req, res) => {
+  const { month } = req.query;
+  if (!validMonth(month)) return res.status(400).json({ error: 'Choose a valid month.' });
+  const closures = await ShopClosure.find({
+    shopId: req.session.shopId,
+    date: { $gte: `${month}-01`, $lte: `${month}-31` },
+    active: true,
+  }).sort({ date: 1 }).lean();
+  res.json({
+    closures: closures.map((closure) => ({
+      id: closure._id.toString(),
+      date: closure.date,
+      label: closure.label,
+      type: closure.type,
+      payTreatment: closure.payTreatment,
+    })),
+  });
+}));
+
+app.post('/api/closures', requireAuth, requireCsrf, requireOwner, asyncRoute(async (req, res) => {
+  const { date, label, type, payTreatment, repeatWeekly = false } = req.body;
+  if (!validDate(date) || !validName(label) ||
+      !['holiday', 'weekly_off'].includes(type) ||
+      !['paid', 'unpaid'].includes(payTreatment) ||
+      typeof repeatWeekly !== 'boolean' || (repeatWeekly && type !== 'weekly_off')) {
+    return res.status(400).json({ error: 'Enter a valid date, closure name, closure type, and pay treatment.' });
+  }
+  const month = date.slice(0, 7);
+  if (!await requirePayrollConfirmation(req, res, month)) return;
+  const actor = await User.findById(req.session.userId).select('displayName').lean();
+  if (!actor) return res.status(401).json({ error: 'Please sign in again.' });
+  const dates = [date];
+  if (repeatWeekly) {
+    const dateObject = new Date(`${date}T12:00:00Z`);
+    const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+    for (let day = dateObject.getUTCDate() + 7; day <= monthEnd; day += 7) {
+      dates.push(`${month}-${String(day).padStart(2, '0')}`);
+    }
+  }
+  if (await ShopClosure.exists({ shopId: req.session.shopId, date: { $in: dates }, active: true })) {
+    return res.status(409).json({ error: 'A closure is already set on one or more selected dates.' });
+  }
+  if (await Attendance.exists({ shopId: req.session.shopId, date: { $in: dates } })) {
+    return res.status(409).json({ error: 'Clear attendance entries on the selected date(s) before adding a shop closure.' });
+  }
+  const seriesId = repeatWeekly ? crypto.randomUUID() : '';
+  await ShopClosure.insertMany(dates.map((closureDate) => ({
+    shopId: req.session.shopId,
+    date: closureDate,
+    seriesId,
+    label: label.trim(),
+    type,
+    payTreatment,
+    actor: actor.displayName,
+  })));
+  await markFinalizedMonthChanged(req.session.shopId, month, actor.displayName);
+  await logActivity({
+    shopId: req.session.shopId,
+    month,
+    action: 'closure_added',
+    description: `${label.trim()} added for ${dates.length} ${dates.length === 1 ? 'date' : 'dates'} as ${payTreatment}.`,
+    actor: actor.displayName,
+  });
+  res.status(201).json({ dates });
+}));
+
+app.delete('/api/closures/:id', requireAuth, requireCsrf, requireOwner, asyncRoute(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Choose a valid closure.' });
+  const closure = await ShopClosure.findOne({ _id: req.params.id, shopId: req.session.shopId, active: true });
+  if (!closure) return res.status(404).json({ error: 'Closure not found.' });
+  const month = closure.date.slice(0, 7);
+  if (!await requirePayrollConfirmation(req, res, month)) return;
+  const actor = await User.findById(req.session.userId).select('displayName').lean();
+  if (!actor) return res.status(401).json({ error: 'Please sign in again.' });
+  closure.voidedAt = new Date();
+  closure.voidedBy = actor.displayName;
+  closure.active = false;
+  await closure.save();
+  await markFinalizedMonthChanged(req.session.shopId, month, actor.displayName);
+  await logActivity({
+    shopId: req.session.shopId,
+    month,
+    action: 'closure_removed',
+    description: `${closure.label} on ${closure.date} was removed.`,
+    actor: actor.displayName,
+  });
+  res.json({ ok: true });
 }));
 
 app.get('/api/attendance', requireAuth, asyncRoute(async (req, res) => {
@@ -463,6 +852,12 @@ async function applyAttendanceChanges({ req, dates, status, employeeId, deductio
   }
   if (req.session.role !== 'owner' && deductionAmount !== undefined) {
     res.status(403).json({ error: 'Only the owner can set wage deductions.' });
+    return;
+  }
+  const month = uniqueDates[0].slice(0, 7);
+  if (!await requirePayrollConfirmation(req, res, month)) return;
+  if (await ShopClosure.exists({ shopId: req.session.shopId, date: { $in: uniqueDates }, active: true })) {
+    res.status(409).json({ error: 'A shop closure is set on one or more selected dates. Remove the closure before marking attendance.' });
     return;
   }
   const actor = await User.findById(req.session.userId).select('displayName role').lean();
@@ -546,6 +941,16 @@ async function applyAttendanceChanges({ req, dates, status, employeeId, deductio
   if (leaveLimitError) {
     res.status(409).json({ error: leaveLimitError });
     return;
+  }
+  if (changedCount && await isFinalizedMonth(req.session.shopId, month)) {
+    await markFinalizedMonthChanged(req.session.shopId, month, actor.displayName);
+    await logActivity({
+      shopId: req.session.shopId,
+      month,
+      action: 'finalized_payroll_changed',
+      description: `Attendance changed for ${employee.name} after payroll finalization.`,
+      actor: actor.displayName,
+    });
   }
   res.json({ ok: true, changedCount });
 }

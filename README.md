@@ -22,11 +22,15 @@ Do not share `.env`, the setup token, database credentials, or worker passwords.
 
 ## Monthly leave and wages
 
+- Owners can switch between separate Attendance, Payroll, and Pay & shop settings views; workers only see Attendance.
 - Each worker has a normal monthly paid-leave allowance. The owner can set a separate allowance for the displayed month to carry days forward manually; unused leave is never carried automatically, and a one-month adjustment does not change future months.
 - Present counts as one worked day and Half day as half a worked day for daily-rate workers.
 - Unpaid leave reduces a fixed monthly wage by one day’s share: monthly wage ÷ (calendar days in that month − paid-leave allowance). The owner can override the deduction per day. Paid leave does not reduce fixed monthly wages.
 - Owners can mark a date range or individually selected dates at once. Replacing existing attendance requires a second confirmation, and every change is added to the audit history.
-- Fixed-monthly wage estimates show the monthly wage less unpaid-leave deductions. Daily-rate estimates count Present as a full day and Half day as half a day.
+- The owner payroll report shows each worker’s attendance counts, gross wage, unpaid-leave and closure deductions, advances, bonuses, other deductions, and estimated final pay. A daily-rate worker receives their daily rate for a paid shop-closure day; an unpaid shop closure reduces fixed monthly pay by the same per-day share as unpaid leave.
+- Owners can record salary advances, bonuses, or other deductions with a note. Entries can be voided without erasing the audit history.
+- Add individual holidays or repeat a weekly-off weekday through the current month. Choose paid or unpaid treatment for each closure. Closures remain separate from worker attendance, and the app prevents marking attendance on an active closure date.
+- Payroll can be finalized with the owner name and timestamp, downloaded as CSV, or printed. Editing a finalized month requires confirmation and marks the report as changed; finalize it again after review.
 - Worker-submitted attendance counts immediately. Owners can review and edit any worker's entries; changes appear in the audit history.
 
 This app is a lightweight shop register, not payroll or statutory leave software. Verify wage calculations and local employment requirements before using totals for payment.

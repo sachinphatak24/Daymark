@@ -43,10 +43,58 @@
             <h1 id="page-title">Attendance &amp; wages</h1>
             <p class="intro-copy" id="intro-copy"></p>
           </div>
-          <label class="employee-control owner-only" for="active-employee"><span>Worker</span><select id="active-employee"></select></label>
         </section>
 
-        <section class="owner-panel owner-only" aria-labelledby="team-heading">
+        <nav class="workspace-nav owner-only" aria-label="Owner workspace">
+          <button class="workspace-tab" type="button" data-view-button="attendance" aria-pressed="true">Attendance</button>
+          <button class="workspace-tab" type="button" data-view-button="payroll" aria-pressed="false">Payroll</button>
+          <button class="workspace-tab" type="button" data-view-button="management" aria-pressed="false">Pay &amp; shop settings</button>
+        </nav>
+        <div class="workspace-toolbar">
+          <div class="month-controls">
+            <button class="icon-button" id="previous-month" type="button" aria-label="Previous month"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.5 4.5-5.5 5.5 5.5 5.5"/></svg></button>
+            <h2 id="month-label" aria-live="polite"></h2>
+            <button class="icon-button" id="next-month" type="button" aria-label="Next month"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 5.5 5.5-5.5 5.5"/></svg></button>
+            <button class="today-button" id="today-button" type="button">Today</button>
+          </div>
+          <label class="employee-control owner-only context-worker" for="active-employee"><span>Worker</span><select id="active-employee"></select></label>
+        </div>
+
+        <section class="workspace-page" data-workspace-page="attendance" aria-label="Attendance workspace">
+        <section class="summary" aria-label="Selected worker monthly summary">
+          <article class="summary-card"><span class="summary-icon present-icon" aria-hidden="true">✓</span><div><p>Present</p><strong id="present-count">0</strong></div><span class="summary-period">this month</span></article>
+          <article class="summary-card"><span class="summary-icon half-icon" aria-hidden="true">½</span><div><p>Half days</p><strong id="half-count">0</strong></div><span class="summary-period">this month</span></article>
+          <article class="summary-card leave-card"><span class="summary-icon paid-icon" aria-hidden="true">✳</span><div><p>Paid leave</p><strong><span id="paid-used">0</span><small> / <span id="paid-total">0</span></small></strong></div><span class="summary-period" id="paid-remaining">this month</span></article>
+          <article class="summary-card"><span class="summary-icon unpaid-icon" aria-hidden="true">↗</span><div><p>Unpaid leave</p><strong id="unpaid-count">0</strong></div><span class="summary-period">this month</span></article>
+          <article class="summary-card wage-card"><span class="summary-icon wage-icon" aria-hidden="true">¤</span><div><p>Estimated wages</p><strong id="wage-total">—</strong></div><span class="summary-period" id="wage-period">this month</span></article>
+        </section>
+        </section>
+
+        <section class="workspace-page hidden owner-only" data-workspace-page="payroll" aria-label="Payroll workspace">
+        <section class="owner-panel payroll-panel" aria-labelledby="payroll-heading">
+          <div class="section-heading payroll-heading">
+            <div><p class="eyebrow">MONTH-END</p><h2 id="payroll-heading">Payroll summary</h2><p class="owner-help" id="payroll-period-status">Review wage totals for this month.</p></div>
+            <div class="payroll-actions">
+              <button class="cancel-button" id="export-csv-button" type="button">Download CSV</button>
+              <button class="cancel-button" id="print-report-button" type="button">Print report</button>
+              <button class="save-button" id="finalize-payroll-button" type="button">Finalize month</button>
+            </div>
+          </div>
+          <p class="payroll-warning hidden" id="payroll-warning" role="status"></p>
+          <div class="payroll-table-wrap">
+            <table class="payroll-table">
+              <thead><tr>
+                <th>Worker</th><th>Worked</th><th>Paid leave</th><th>Unpaid leave</th><th>Shop closures</th><th>Gross</th>
+                <th>Leave / closure deduction</th><th>Advance</th><th>Bonus</th><th>Other deduction</th><th>Total deductions</th><th>Final pay</th>
+              </tr></thead>
+              <tbody id="payroll-rows"></tbody>
+            </table>
+          </div>
+        </section>
+        </section>
+
+        <section class="workspace-page hidden owner-only" data-workspace-page="management" aria-label="Pay and shop settings">
+        <section class="owner-panel" aria-labelledby="team-heading">
           <div class="section-heading">
             <div><p class="eyebrow">TEAM SETTINGS</p><h2 id="team-heading">Add or update a worker</h2></div>
             <label class="currency-control" for="currency-select">Currency
@@ -70,23 +118,40 @@
           <p class="owner-help">Each worker gets a separate login. Their normal monthly allowance resets every month. Unused days do not carry over automatically; adjust only this month’s allowance if you want to carry days forward.</p>
           <p class="form-message" id="employee-message" role="status"></p>
         </section>
-
-        <section class="summary" aria-label="Selected worker monthly summary">
-          <article class="summary-card"><span class="summary-icon present-icon" aria-hidden="true">✓</span><div><p>Present</p><strong id="present-count">0</strong></div><span class="summary-period">this month</span></article>
-          <article class="summary-card"><span class="summary-icon half-icon" aria-hidden="true">½</span><div><p>Half days</p><strong id="half-count">0</strong></div><span class="summary-period">this month</span></article>
-          <article class="summary-card leave-card"><span class="summary-icon paid-icon" aria-hidden="true">✳</span><div><p>Paid leave</p><strong><span id="paid-used">0</span><small> / <span id="paid-total">0</span></small></strong></div><span class="summary-period" id="paid-remaining">this month</span></article>
-          <article class="summary-card"><span class="summary-icon unpaid-icon" aria-hidden="true">↗</span><div><p>Unpaid leave</p><strong id="unpaid-count">0</strong></div><span class="summary-period">this month</span></article>
-          <article class="summary-card wage-card"><span class="summary-icon wage-icon" aria-hidden="true">¤</span><div><p>Estimated wages</p><strong id="wage-total">—</strong></div><span class="summary-period" id="wage-period">this month</span></article>
+        <div class="payroll-entry-grid management-entry-grid">
+          <form id="adjustment-form" class="owner-panel payroll-entry-form">
+            <h3>Record pay adjustment</h3>
+            <label><span>Worker</span><select id="adjustment-employee" required></select></label>
+            <label><span>Type</span><select id="adjustment-type"><option value="advance">Salary advance (subtract)</option><option value="bonus">Bonus (add)</option><option value="deduction">Other deduction (subtract)</option></select></label>
+            <label><span>Amount</span><span class="money-input"><span class="payroll-currency-prefix">₹</span><input id="adjustment-amount" type="number" min="0.01" step="0.01" required></span></label>
+            <label><span>Note (optional)</span><input id="adjustment-note" maxlength="200" placeholder="Reason or reference"></label>
+            <button class="save-button" type="submit">Add adjustment</button>
+            <p class="form-message" id="adjustment-message" role="status"></p>
+          </form>
+          <form id="closure-form" class="owner-panel payroll-entry-form">
+            <h3>Schedule a shop closure</h3>
+            <label><span>Date</span><input id="closure-date" type="date" required></label>
+            <label><span>Name</span><input id="closure-label" maxlength="80" placeholder="e.g. Weekly off or festival" required></label>
+            <label><span>Closure type</span><select id="closure-type"><option value="holiday">Holiday</option><option value="weekly_off">Weekly off</option></select></label>
+            <label class="closure-repeat-control hidden" id="closure-repeat-control"><span><input id="closure-repeat" type="checkbox"> Repeat this weekday for this month</span></label>
+            <label><span>Pay treatment</span><select id="closure-pay"><option value="paid">Paid closure (no deduction)</option><option value="unpaid">Unpaid closure (deduct monthly wages)</option></select></label>
+            <button class="save-button" type="submit">Add closure</button>
+            <p class="form-message" id="closure-message" role="status"></p>
+          </form>
+        </div>
+        <details class="payroll-records management-records" id="payroll-records">
+          <summary>Adjustments, closures, and payroll activity</summary>
+          <div class="payroll-record-groups">
+            <section><h3>Adjustments</h3><ul id="adjustment-list" class="payroll-record-list"></ul></section>
+            <section><h3>Shop closures</h3><ul id="closure-list" class="payroll-record-list"></ul></section>
+            <section><h3>Payroll activity</h3><ul id="payroll-activity-list" class="payroll-record-list"></ul></section>
+          </div>
+        </details>
         </section>
 
+        <section class="workspace-page" data-workspace-page="attendance" aria-label="Attendance calendar and history">
         <section class="calendar-panel" aria-label="Attendance calendar">
           <div class="calendar-toolbar">
-            <div class="month-controls">
-              <button class="icon-button" id="previous-month" type="button" aria-label="Previous month"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.5 4.5-5.5 5.5 5.5 5.5"/></svg></button>
-              <h2 id="month-label" aria-live="polite"></h2>
-              <button class="icon-button" id="next-month" type="button" aria-label="Next month"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 5.5 5.5-5.5 5.5"/></svg></button>
-              <button class="today-button" id="today-button" type="button">Today</button>
-            </div>
             <div class="calendar-actions">
               <p class="calendar-hint"><span aria-hidden="true">↗</span> Select any day to mark attendance</p>
               <div class="bulk-actions owner-only">
@@ -148,6 +213,13 @@
         </label>
         <p class="bulk-warning hidden" id="bulk-warning" role="alert"></p>
         <div class="dialog-actions"><button class="cancel-button" type="button" id="cancel-bulk-dialog">Cancel</button><button class="save-button" id="bulk-apply-button" type="submit">Apply status</button></div>
+      </form>
+    </dialog>
+    <dialog id="payroll-confirm-dialog" aria-labelledby="payroll-confirm-title">
+      <form method="dialog" id="payroll-confirm-form">
+        <div class="dialog-heading"><div><p class="eyebrow">FINALIZED PAYROLL</p><h2 id="payroll-confirm-title">Confirm payroll change</h2></div><button class="dialog-close" type="button" id="close-payroll-confirm" aria-label="Close">×</button></div>
+        <p id="payroll-confirm-message" class="payroll-confirm-message"></p>
+        <div class="dialog-actions"><button class="cancel-button" type="button" id="cancel-payroll-confirm">Cancel</button><button class="save-button" type="submit" id="confirm-payroll-change">Continue with change</button></div>
       </form>
     </dialog>
     <div class="sr-only" id="live-message" role="status" aria-live="polite"></div>
